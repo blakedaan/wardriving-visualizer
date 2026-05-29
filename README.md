@@ -2,8 +2,6 @@
 
 A browser-based tool for visualizing passive WiFi survey data collected during security audits and network assessments. Built as a single HTML file with zero dependencies to install — just open and go.
 
-![RF Survey Visualizer](screenshots/preview.png)
-
 ---
 
 ## What It Does
