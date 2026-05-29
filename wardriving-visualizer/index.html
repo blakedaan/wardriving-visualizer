@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RF Survey Visualizer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #232736;
+    --border: #2d3148;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --cyan: #22d3ee;
+    --red: #f87171;
+    --green: #4ade80;
+    --blue: #60a5fa;
+    --orange: #fb923c;
+    --purple: #a78bfa;
+    --yellow: #facc15;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #map { position:absolute; inset:0; z-index:1; }
+
+  /* ── Drop Zone Overlay ── */
+  #dropOverlay {
+    position:fixed; inset:0; z-index:1000;
+    background: rgba(15,17,23,0.97);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:20px;
+  }
+
+  .drop-logo {
+    font-size:13px; font-weight:800; letter-spacing:3px;
+    text-transform:uppercase; color:var(--cyan);
+    margin-bottom:8px;
+  }
+
+  .drop-zone {
+    width:420px; max-width:90vw;
+    border:2px dashed var(--border);
+    border-radius:16px;
+    padding:48px 32px;
+    text-align:center;
+    transition:all 0.2s;
+    cursor:pointer;
+    background:var(--surface);
+  }
+
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color:var(--cyan);
+    background:rgba(34,211,238,0.05);
+  }
+
+  .drop-icon { font-size:48px; margin-bottom:16px; opacity:0.6; }
+
+  .drop-title {
+    font-size:18px; font-weight:700; color:var(--text);
+    margin-bottom:8px;
+  }
+
+  .drop-sub { font-size:13px; color:var(--muted); line-height:1.6; margin-bottom:20px; }
+
+  .drop-btn {
+    background:var(--cyan); color:#0f1117;
+    border:none; padding:11px 24px; border-radius:8px;
+    font-size:14px; font-weight:800; cursor:pointer;
+    font-family:inherit; transition:opacity 0.15s;
+  }
+  .drop-btn:hover { opacity:0.85; }
+
+  #fileInput { display:none; }
+
+  .loaded-files {
+    width:420px; max-width:90vw;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:16px;
+    display:none;
+  }
+
+  .loaded-title {
+    font-size:12px; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:1px;
+    margin-bottom:12px;
+  }
+
+  .file-item {
+    display:flex; align-items:center; gap:10px;
+    padding:8px 10px; border-radius:8px;
+    background:var(--surface2); margin-bottom:6px;
+    font-size:13px;
+  }
+  .file-item:last-child { margin-bottom:0; }
+
+  .file-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  .file-name { flex:1; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file-count { color:var(--muted); font-size:12px; }
+
+  .launch-btn {
+    width:100%; margin-top:14px;
+    background:var(--cyan); color:#0f1117;
+    border:none; padding:12px; border-radius:8px;
+    font-size:15px; font-weight:800; cursor:pointer;
+    font-family:inherit; transition:opacity 0.15s;
+  }
+  .launch-btn:hover { opacity:0.85; }
+
+  /* ── Top Controls ── */
+  .topbar {
+    position:fixed; top:12px; left:12px; z-index:100;
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+    max-width:calc(100vw - 240px);
+  }
+
+  .search-box {
+    display:flex; align-items:center;
+    background:var(--surface); border:1.5px solid var(--border);
+    border-radius:10px; overflow:hidden;
+    box-shadow:0 2px 12px rgba(0,0,0,0.3);
+    transition:border-color 0.2s;
+  }
+  .search-box:focus-within { border-color:var(--cyan); }
+
+  .search-box input {
+    border:none; outline:none; padding:10px 14px;
+    font-size:13px; width:210px; font-family:inherit;
+    color:var(--text); background:transparent;
+  }
+  .search-box input::placeholder { color:var(--muted); }
+
+  .search-clear {
+    padding:0 12px; cursor:pointer; color:var(--muted);
+    font-size:20px; font-weight:300; line-height:1;
+    border:none; background:none; transition:color 0.15s;
+  }
+  .search-clear:hover { color:var(--red); }
+
+  .filter-group {
+    display:flex; background:var(--surface);
+    border:1.5px solid var(--border); border-radius:10px;
+    overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,0.3);
+  }
+
+  .fbtn {
+    padding:10px 13px; border:none; background:transparent;
+    font-size:12px; font-weight:700; cursor:pointer;
+    font-family:inherit; color:var(--muted);
+    border-right:1px solid var(--border);
+    transition:all 0.15s; white-space:nowrap;
+  }
+  .fbtn:last-child { border-right:none; }
+  .fbtn:hover { color:var(--text); background:var(--surface2); }
+  .fbtn.active.all   { background:var(--cyan);   color:#0f1117; }
+  .fbtn.active.open  { background:var(--red);    color:white;   }
+  .fbtn.active.wpa2  { background:var(--green);  color:#0f1117; }
+  .fbtn.active.wpa3  { background:var(--blue);   color:white;   }
+  .fbtn.active.wpa   { background:var(--orange); color:#0f1117; }
+
+  .icon-btn {
+    background:var(--surface); border:1.5px solid var(--border);
+    color:var(--muted); border-radius:10px;
+    padding:10px 13px; cursor:pointer; font-size:12px;
+    font-weight:700; font-family:inherit;
+    box-shadow:0 2px 12px rgba(0,0,0,0.3);
+    transition:all 0.15s; white-space:nowrap;
+  }
+  .icon-btn:hover { color:var(--text); border-color:var(--cyan); }
+  .icon-btn.active { background:var(--purple); border-color:var(--purple); color:white; }
+
+  /* ── Stats Panel ── */
+  .stats-panel {
+    position:fixed; top:12px; right:12px; z-index:100;
+    background:var(--surface); border:1.5px solid var(--border);
+    border-radius:12px; padding:16px; min-width:210px;
+    box-shadow:0 2px 16px rgba(0,0,0,0.4);
+  }
+
+  .panel-title {
+    font-size:11px; font-weight:800; letter-spacing:1.5px;
+    text-transform:uppercase; color:var(--cyan);
+    margin-bottom:12px;
+  }
+
+  .stat-row {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:5px 0; border-bottom:1px solid var(--border);
+    font-size:13px;
+  }
+  .stat-row:last-child { border-bottom:none; }
+  .stat-label { color:var(--muted); }
+  .stat-val { font-weight:800; color:var(--text); }
+
+  .enc-bar { display:flex; height:6px; border-radius:3px; overflow:hidden; margin-top:10px; gap:1px; }
+  .enc-seg { height:100%; transition:width 0.3s; border-radius:2px; }
+
+  /* ── Run Toggles ── */
+  .runs-panel {
+    position:fixed; bottom:70px; right:12px; z-index:100;
+    background:var(--surface); border:1.5px solid var(--border);
+    border-radius:12px; padding:14px; min-width:210px;
+    box-shadow:0 2px 16px rgba(0,0,0,0.4);
+    display:none;
+  }
+
+  .run-item {
+    display:flex; align-items:center; gap:10px;
+    padding:7px 0; border-bottom:1px solid var(--border);
+    cursor:pointer; user-select:none;
+  }
+  .run-item:last-child { border-bottom:none; }
+
+  .run-dot { width:12px; height:12px; border-radius:50%; flex-shrink:0; }
+
+  .run-info { flex:1; }
+  .run-name { font-size:12px; font-weight:700; color:var(--text); }
+  .run-meta { font-size:11px; color:var(--muted); margin-top:1px; }
+
+  .run-toggle {
+    width:32px; height:18px; border-radius:9px;
+    background:var(--border); position:relative;
+    transition:background 0.2s; flex-shrink:0;
+  }
+  .run-toggle::after {
+    content:''; position:absolute; width:14px; height:14px;
+    background:white; border-radius:50%; top:2px; left:2px;
+    transition:transform 0.2s;
+  }
+  .run-toggle.on { background:var(--cyan); }
+  .run-toggle.on::after { transform:translateX(14px); }
+
+  /* ── Bottom bar ── */
+  .bottombar {
+    position:fixed; bottom:12px; left:12px; z-index:100;
+    display:flex; gap:8px; align-items:center;
+  }
+
+  .results-badge {
+    background:var(--surface); border:1.5px solid var(--border);
+    color:var(--cyan); padding:8px 14px; border-radius:20px;
+    font-size:12px; font-weight:700;
+    box-shadow:0 2px 8px rgba(0,0,0,0.3);
+    display:none;
+  }
+
+  .crack-legend {
+    background:var(--surface); border:1.5px solid var(--border);
+    padding:8px 14px; border-radius:20px; font-size:12px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.3);
+    color:var(--muted);
+  }
+
+  /* ── Popup ── */
+  .leaflet-popup-content-wrapper {
+    background:var(--surface) !important;
+    border:1.5px solid var(--border) !important;
+    border-radius:12px !important;
+    box-shadow:0 4px 20px rgba(0,0,0,0.5) !important;
+    color:var(--text) !important;
+  }
+  .leaflet-popup-tip { background:var(--surface) !important; }
+  .leaflet-popup-close-button { color:var(--muted) !important; }
+
+  .popup-ssid { font-size:15px; font-weight:800; color:var(--text); margin-bottom:10px; }
+  .popup-table { width:100%; font-size:12px; border-collapse:collapse; }
+  .popup-table td { padding:4px 0; border-bottom:1px solid var(--border); }
+  .popup-table tr:last-child td { border-bottom:none; }
+  .popup-table td:first-child { color:var(--muted); width:80px; }
+  .popup-table td:last-child { font-weight:700; }
+
+  .popup-actions { display:flex; gap:6px; margin-top:10px; }
+  .pop-btn {
+    flex:1; padding:7px 6px; border:none; border-radius:7px;
+    font-size:11px; font-weight:800; cursor:pointer;
+    font-family:inherit; transition:opacity 0.15s;
+  }
+  .pop-btn:hover { opacity:0.8; }
+  .pop-btn.cracked  { background:var(--green);  color:#0f1117; }
+  .pop-btn.tried    { background:var(--orange); color:#0f1117; }
+  .pop-btn.target   { background:var(--red);    color:white; }
+  .pop-btn.clear-s  { background:var(--surface2); color:var(--muted); }
+
+  /* Status rings */
+  .status-cracked { stroke:#4ade80 !important; stroke-width:3 !important; }
+  .status-tried   { stroke:#fb923c !important; stroke-width:3 !important; }
+  .status-target  { stroke:#f87171 !important; stroke-width:3 !important; }
+</style>
+</head>
+<body>
+
+<!-- ── Drop Overlay ── -->
+<div id="dropOverlay">
+  <div class="drop-logo">RF Survey Visualizer</div>
+
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="drop-icon">📡</div>
+    <p class="drop-title">Drop Wardriving CSVs Here</p>
+    <p class="drop-sub">
+      Accepts WiGLE-format CSV files from Bruce firmware.<br>
+      Drop multiple files to compare runs side by side.
+    </p>
+    <button class="drop-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+      Browse Files
+    </button>
+  </div>
+
+  <div class="loaded-files" id="loadedFiles">
+    <div class="loaded-title">Loaded Files</div>
+    <div id="fileList"></div>
+    <button class="launch-btn" onclick="launchMap()">Launch Map →</button>
+  </div>
+
+  <input type="file" id="fileInput" multiple accept=".csv">
+</div>
+
+<!-- ── Map ── -->
+<div id="map"></div>
+
+<!-- ── Controls (hidden until map launches) ── -->
+<div class="topbar" id="topbar" style="display:none;">
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="Search SSID or MAC..." oninput="doSearch()">
+    <button class="search-clear" onclick="clearSearch()">×</button>
+  </div>
+  <div class="filter-group">
+    <button class="fbtn all active" onclick="setFilter('all',this)">All</button>
+    <button class="fbtn open"       onclick="setFilter('open',this)">Open</button>
+    <button class="fbtn wpa2"       onclick="setFilter('wpa2',this)">WPA2</button>
+    <button class="fbtn wpa3"       onclick="setFilter('wpa3',this)">WPA3</button>
+    <button class="fbtn wpa"        onclick="setFilter('wpa',this)">WPA</button>
+  </div>
+  <button class="icon-btn" id="heatBtn" onclick="toggleHeat()">Heatmap</button>
+  <button class="icon-btn" id="routeBtn" onclick="toggleRoutes()">Route</button>
+  <button class="icon-btn" onclick="resetView()">Reset View</button>
+  <button class="icon-btn" onclick="document.getElementById('fileInput2').click()">+ Add Run</button>
+  <input type="file" id="fileInput2" multiple accept=".csv" style="display:none">
+</div>
+
+<div class="stats-panel" id="statsPanel" style="display:none;">
+  <div class="panel-title">RF Survey Stats</div>
+  <div class="stat-row"><span class="stat-label">Showing</span><span class="stat-val" id="showingCount">0</span></div>
+  <div class="stat-row"><span class="stat-label">Total</span><span class="stat-val" id="totalCount">0</span></div>
+  <div class="stat-row"><span class="stat-label">Open</span><span class="stat-val" style="color:var(--red)" id="openCount">0</span></div>
+  <div class="stat-row"><span class="stat-label">WPA2</span><span class="stat-val" style="color:var(--green)" id="wpa2Count">0</span></div>
+  <div class="stat-row"><span class="stat-label">WPA2/WPA3</span><span class="stat-val" style="color:var(--blue)" id="wpa3Count">0</span></div>
+  <div class="stat-row"><span class="stat-label">WPA/WPA2</span><span class="stat-val" style="color:var(--orange)" id="wpaCount">0</span></div>
+  <div class="stat-row"><span class="stat-label">Runs Loaded</span><span class="stat-val" id="runsCount">0</span></div>
+  <div class="enc-bar" id="encBar"></div>
+</div>
+
+<div class="runs-panel" id="runsPanel">
+  <div class="panel-title">Runs</div>
+  <div id="runsList"></div>
+</div>
+
+<div class="bottombar" id="bottombar" style="display:none;">
+  <div class="results-badge" id="resultsBadge"></div>
+  <div class="crack-legend">
+    <span style="color:var(--green);">■</span> Cracked &nbsp;
+    <span style="color:var(--orange);">■</span> Attempted &nbsp;
+    <span style="color:var(--red);">■</span> Target
+  </div>
+</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────
+var RUN_COLORS = ['#22d3ee','#a78bfa','#fb923c','#f472b6','#34d399','#fbbf24','#60a5fa','#f87171'];
+
+// ── State ──────────────────────────────────────────────────
+var map;
+var allMarkers   = [];   // {marker, ssid, mac, type, lat, lon, runId, circleEl}
+var runs         = [];   // {id, name, color, networks, markers, routeLine, visible}
+var statusMap    = {};   // mac -> 'cracked'|'tried'|'target'
+var currentFilter = 'all';
+var currentSearch = '';
+var heatLayer    = null;
+var heatVisible  = false;
+var routesVisible = true;
+var pendingFiles = [];
+
+// ── Init Map ───────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', {zoomControl:false}).setView([29.751, -95.611], 15);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution:'&copy; OpenStreetMap &copy; CartoDB', maxZoom:20
+  }).addTo(map);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+}
+
+// ── File Handling ──────────────────────────────────────────
+function handleFiles(files) {
+  Array.from(files).forEach(function(file) {
+    if (!file.name.endsWith('.csv')) return;
+    // Avoid duplicates
+    if (pendingFiles.find(function(f){ return f.name === file.name; })) return;
+    pendingFiles.push(file);
+  });
+  updateFileList();
+}
+
+function updateFileList() {
+  var list = document.getElementById('fileList');
+  list.innerHTML = '';
+  pendingFiles.forEach(function(f, i) {
+    var color = RUN_COLORS[i % RUN_COLORS.length];
+    list.innerHTML += '<div class="file-item">' +
+      '<div class="file-dot" style="background:'+color+';"></div>' +
+      '<span class="file-name">'+f.name+'</span>' +
+      '</div>';
+  });
+  if (pendingFiles.length > 0) {
+    document.getElementById('loadedFiles').style.display = 'block';
+  }
+}
+
+function launchMap() {
+  if (pendingFiles.length === 0) return;
+  initMap();
+  var promises = pendingFiles.map(function(f, i) {
+    return readCSV(f, i);
+  });
+  Promise.all(promises).then(function() {
+    document.getElementById('dropOverlay').style.display = 'none';
+    document.getElementById('topbar').style.display = 'flex';
+    document.getElementById('statsPanel').style.display = 'block';
+    document.getElementById('bottombar').style.display = 'flex';
+    document.getElementById('runsPanel').style.display = 'block';
+    updateStats();
+    fitAllNetworks();
+    updateRunsList();
+  });
+}
+
+function readCSV(file, runIndex) {
+  return new Promise(function(resolve) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var lines = e.target.result.split('\n');
+      // Skip WiGLE header lines (first 2)
+      var dataLines = lines.slice(2);
+      var networks = [];
+      dataLines.forEach(function(line) {
+        line = line.trim();
+        if (!line) return;
+        var row = parseCSVLine(line);
+        if (row.length < 9) return;
+        var lat = parseFloat(row[7]);
+        var lon = parseFloat(row[8]);
+        var rssi = parseFloat(row[6]);
+        if (isNaN(lat) || isNaN(lon) || lat === 0) return;
+        networks.push({
+          mac:  row[0].trim(),
+          ssid: row[1].trim().replace(/^"|"$/g,''),
+          auth: row[2].trim(),
+          ch:   parseInt(row[4]) || 0,
+          rssi: rssi,
+          lat:  lat,
+          lon:  lon
+        });
+      });
+
+      var color = RUN_COLORS[runIndex % RUN_COLORS.length];
+      var runId = runs.length;
+      var run = {
+        id: runId,
+        name: file.name.replace('.csv',''),
+        color: color,
+        networks: networks,
+        markers: [],
+        routeLine: null,
+        visible: true
+      };
+      runs.push(run);
+      addRunToMap(run);
+      resolve();
+    };
+    reader.readAsText(file);
+  });
+}
+
+function parseCSVLine(line) {
+  var result = [], cur = '', inQ = false;
+  for (var i=0; i<line.length; i++) {
+    var c = line[i];
+    if (c==='"') { inQ=!inQ; }
+    else if (c===',' && !inQ) { result.push(cur); cur=''; }
+    else { cur+=c; }
+  }
+  result.push(cur);
+  return result;
+}
+
+// ── Add Run ────────────────────────────────────────────────
+function addRunToMap(run) {
+  // Draw route
+  var routePoints = [], seen = {};
+  run.networks.forEach(function(n) {
+    var k = n.lat+','+n.lon;
+    if (!seen[k]) { seen[k]=true; routePoints.push([n.lat,n.lon]); }
+  });
+  run.routeLine = L.polyline(routePoints, {
+    color:run.color, weight:2.5, opacity:0.5, dashArray:'6,9'
+  }).addTo(map);
+
+  // Draw markers
+  run.networks.forEach(function(n) {
+    var color = getColor(n.auth);
+    var type  = getType(n.auth);
+    var size  = Math.max(5, Math.min(13, 13 + (n.rssi/10)));
+
+    var m = L.circleMarker([n.lat,n.lon], {
+      radius:size, fillColor:color, color:run.color,
+      weight:1.5, fillOpacity:0.8
+    });
+
+    m.on('click', function() { openPopup(n, run, m); });
+
+    var markerObj = {
+      marker:m, ssid:n.ssid.toLowerCase(), mac:n.mac.toLowerCase(),
+      type:type, lat:n.lat, lon:n.lon, runId:run.id, data:n, run:run
+    };
+
+    run.markers.push(markerObj);
+    allMarkers.push(markerObj);
+    m.addTo(map);
+  });
+
+  // Build heatmap data
+  rebuildHeat();
+}
+
+// ── Popup ──────────────────────────────────────────────────
+function openPopup(n, run, marker) {
+  var status = statusMap[n.mac] || 'none';
+  var label  = getLabel(n.auth);
+  var statusText = status !== 'none' ? '<tr><td>Status</td><td style="color:'+statusColor(status)+';">'+status.toUpperCase()+'</td></tr>' : '';
+
+  var popup = L.popup({maxWidth:260, className:'dark-popup'})
+    .setLatLng([n.lat,n.lon])
+    .setContent(
+      '<div style="min-width:210px;">' +
+      '<p class="popup-ssid">'+(n.ssid||'(hidden)')+'</p>' +
+      '<table class="popup-table">' +
+        '<tr><td>Encryption</td><td>'+label+'</td></tr>' +
+        '<tr><td>Signal</td><td>'+n.rssi+' dBm</td></tr>' +
+        '<tr><td>Channel</td><td>'+n.ch+'</td></tr>' +
+        '<tr><td>MAC</td><td style="font-size:11px;">'+n.mac+'</td></tr>' +
+        '<tr><td>Run</td><td style="color:'+run.color+';">'+run.name+'</td></tr>' +
+        statusText +
+      '</table>' +
+      '<div class="popup-actions">' +
+        '<button class="pop-btn cracked" onclick="setStatus(\''+n.mac+'\',\'cracked\')">Cracked</button>' +
+        '<button class="pop-btn tried"   onclick="setStatus(\''+n.mac+'\',\'tried\')">Tried</button>' +
+        '<button class="pop-btn target"  onclick="setStatus(\''+n.mac+'\',\'target\')">Target</button>' +
+        '<button class="pop-btn clear-s" onclick="setStatus(\''+n.mac+'\',\'none\')">Clear</button>' +
+      '</div></div>'
+    ).openOn(map);
+}
+
+function setStatus(mac, status) {
+  if (status === 'none') { delete statusMap[mac]; }
+  else { statusMap[mac] = status; }
+  // Update marker borders
+  allMarkers.forEach(function(m) {
+    if (m.mac === mac.toLowerCase()) {
+      var s = statusMap[mac];
+      m.marker.setStyle({
+        color: s ? statusColor(s) : m.run.color,
+        weight: s ? 3 : 1.5
+      });
+    }
+  });
+  map.closePopup();
+}
+
+function statusColor(s) {
+  return s==='cracked'?'#4ade80':s==='tried'?'#fb923c':s==='target'?'#f87171':'#ffffff';
+}
+
+// ── Filters ────────────────────────────────────────────────
+function applyFilters() {
+  var visible = 0;
+  allMarkers.forEach(function(m) {
+    var run = runs[m.runId];
+    var matchRun    = run && run.visible;
+    var matchFilter = currentFilter==='all' || m.type===currentFilter;
+    var matchSearch = currentSearch==='' ||
+                      m.ssid.includes(currentSearch) ||
+                      m.mac.includes(currentSearch);
+
+    if (matchRun && matchFilter && matchSearch) {
+      if (!map.hasLayer(m.marker)) m.marker.addTo(map);
+      visible++;
+    } else {
+      if (map.hasLayer(m.marker)) map.removeLayer(m.marker);
+    }
+  });
+
+  document.getElementById('showingCount').textContent = visible;
+
+  var badge = document.getElementById('resultsBadge');
+  var filtering = currentSearch!=='' || currentFilter!=='all';
+  if (filtering) {
+    badge.textContent = visible+' result'+(visible!==1?'s':'');
+    badge.style.display = 'block';
+    // Auto-zoom to first search result
+    if (currentSearch !== '') {
+      var first = allMarkers.find(function(m) {
+        return (m.ssid.includes(currentSearch)||m.mac.includes(currentSearch)) &&
+               (currentFilter==='all'||m.type===currentFilter) &&
+               runs[m.runId].visible;
+      });
+      if (first) map.setView([first.lat, first.lon], 18, {animate:true});
+    }
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function doSearch() {
+  currentSearch = document.getElementById('searchInput').value.toLowerCase().trim();
+  applyFilters();
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  currentSearch = '';
+  applyFilters();
+}
+
+function setFilter(type, btn) {
+  currentFilter = type;
+  document.querySelectorAll('.fbtn').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  applyFilters();
+}
+
+// ── Heatmap ────────────────────────────────────────────────
+function rebuildHeat() {
+  if (heatLayer) map.removeLayer(heatLayer);
+  var pts = allMarkers
+    .filter(function(m){ return runs[m.runId] && runs[m.runId].visible; })
+    .map(function(m){ return [m.lat, m.lon, 0.6]; });
+  if (typeof L.heatLayer !== 'undefined') {
+    heatLayer = L.heatLayer(pts, {radius:20, blur:18, maxZoom:17,
+      gradient:{'0.2':'#22d3ee','0.5':'#a78bfa','0.8':'#f87171','1.0':'#ffffff'}});
+    if (heatVisible) heatLayer.addTo(map);
+  }
+}
+
+function toggleHeat() {
+  if (!heatLayer) return;
+  heatVisible = !heatVisible;
+  if (heatVisible) { heatLayer.addTo(map); document.getElementById('heatBtn').classList.add('active'); }
+  else { map.removeLayer(heatLayer); document.getElementById('heatBtn').classList.remove('active'); }
+}
+
+// ── Routes ─────────────────────────────────────────────────
+function toggleRoutes() {
+  routesVisible = !routesVisible;
+  runs.forEach(function(r) {
+    if (routesVisible) r.routeLine.addTo(map);
+    else map.removeLayer(r.routeLine);
+  });
+  document.getElementById('routeBtn').classList.toggle('active', !routesVisible);
+}
+
+// ── Runs Panel ─────────────────────────────────────────────
+function updateRunsList() {
+  var list = document.getElementById('runsList');
+  list.innerHTML = '';
+  runs.forEach(function(run) {
+    var div = document.createElement('div');
+    div.className = 'run-item';
+    div.innerHTML =
+      '<div class="run-dot" style="background:'+run.color+';"></div>' +
+      '<div class="run-info">' +
+        '<div class="run-name">'+run.name+'</div>' +
+        '<div class="run-meta">'+run.networks.length+' networks</div>' +
+      '</div>' +
+      '<div class="run-toggle on" id="toggle-'+run.id+'"></div>';
+    div.onclick = function() { toggleRun(run.id); };
+    list.appendChild(div);
+  });
+}
+
+function toggleRun(runId) {
+  var run = runs[runId];
+  run.visible = !run.visible;
+  var tog = document.getElementById('toggle-'+runId);
+  tog.classList.toggle('on', run.visible);
+  applyFilters();
+  rebuildHeat();
+  updateStats();
+}
+
+// ── Stats ──────────────────────────────────────────────────
+function updateStats() {
+  var total=0, open=0, wpa2=0, wpa3=0, wpa=0;
+  allMarkers.forEach(function(m) {
+    total++;
+    if(m.type==='open') open++;
+    else if(m.type==='wpa3') wpa3++;
+    else if(m.type==='wpa') wpa++;
+    else wpa2++;
+  });
+  document.getElementById('totalCount').textContent   = total;
+  document.getElementById('showingCount').textContent = total;
+  document.getElementById('openCount').textContent    = open;
+  document.getElementById('wpa2Count').textContent    = wpa2;
+  document.getElementById('wpa3Count').textContent    = wpa3;
+  document.getElementById('wpaCount').textContent     = wpa;
+  document.getElementById('runsCount').textContent    = runs.length;
+
+  // Encryption bar
+  var bar = document.getElementById('encBar');
+  var pct = function(n){ return total>0 ? (n/total*100).toFixed(1)+'%' : '0%'; };
+  bar.innerHTML =
+    '<div class="enc-seg" style="background:var(--red);width:'+pct(open)+';" title="Open"></div>' +
+    '<div class="enc-seg" style="background:var(--orange);width:'+pct(wpa)+';" title="WPA"></div>' +
+    '<div class="enc-seg" style="background:var(--green);width:'+pct(wpa2)+';" title="WPA2"></div>' +
+    '<div class="enc-seg" style="background:var(--blue);width:'+pct(wpa3)+';" title="WPA3"></div>';
+}
+
+// ── Helpers ────────────────────────────────────────────────
+function getColor(auth) {
+  if (auth.includes('OPEN'))                              return '#f87171';
+  if (auth.includes('WPA2_WPA3')||auth.includes('WPA3')) return '#60a5fa';
+  if (auth.includes('WPA_WPA2'))                         return '#fb923c';
+  return '#4ade80';
+}
+
+function getLabel(auth) {
+  if (auth.includes('OPEN'))                              return 'Open';
+  if (auth.includes('WPA2_WPA3')||auth.includes('WPA3')) return 'WPA2/WPA3';
+  if (auth.includes('WPA_WPA2'))                         return 'WPA/WPA2';
+  return 'WPA2';
+}
+
+function getType(auth) {
+  if (auth.includes('OPEN'))                              return 'open';
+  if (auth.includes('WPA2_WPA3')||auth.includes('WPA3')) return 'wpa3';
+  if (auth.includes('WPA_WPA2'))                         return 'wpa';
+  return 'wpa2';
+}
+
+function fitAllNetworks() {
+  if (allMarkers.length === 0) return;
+  var lats = allMarkers.map(function(m){ return m.lat; });
+  var lons = allMarkers.map(function(m){ return m.lon; });
+  map.fitBounds([
+    [Math.min.apply(null,lats), Math.min.apply(null,lons)],
+    [Math.max.apply(null,lats), Math.max.apply(null,lons)]
+  ], {padding:[40,40]});
+}
+
+function resetView() { fitAllNetworks(); }
+
+// ── Event Listeners ────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change', function(e) {
+  handleFiles(e.target.files);
+});
+
+document.getElementById('fileInput2').addEventListener('change', function(e) {
+  Array.from(e.target.files).forEach(function(f, i) {
+    var idx = runs.length + i;
+    readCSV(f, idx).then(function() {
+      updateStats(); updateRunsList();
+    });
+  });
+});
+
+var dz = document.getElementById('dropZone');
+dz.addEventListener('dragover',  function(e){ e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', function(){ dz.classList.remove('drag-over'); });
+dz.addEventListener('drop', function(e) {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  handleFiles(e.dataTransfer.files);
+});
+
+// Drop on map too (after launch)
+document.addEventListener('dragover',  function(e){ e.preventDefault(); });
+document.addEventListener('drop', function(e) {
+  e.preventDefault();
+  if (document.getElementById('dropOverlay').style.display === 'none') {
+    var files = Array.from(e.dataTransfer.files).filter(function(f){ return f.name.endsWith('.csv'); });
+    if (files.length > 0) {
+      files.forEach(function(f, i) {
+        readCSV(f, runs.length + i).then(function() {
+          updateStats(); updateRunsList(); fitAllNetworks();
+        });
+      });
+    }
+  }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# Wardriving data — never commit these
+*.csv
+*.pcap
+*.pcapng
+*.cap
+*.hc22000
+*.hccapx
+
+# Credential captures
+creds/
+captures/
+handshakes/
+default_creds.csv
+Bruce_creds.csv
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
