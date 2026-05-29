@@ -299,6 +299,83 @@
   .status-cracked { stroke:#4ade80 !important; stroke-width:3 !important; }
   .status-tried   { stroke:#fb923c !important; stroke-width:3 !important; }
   .status-target  { stroke:#f87171 !important; stroke-width:3 !important; }
+
+  /* ── Address Search ── */
+  .addr-search-box {
+    position:relative;
+    display:flex; align-items:center;
+    background:var(--surface); border:1.5px solid var(--border);
+    border-radius:10px; overflow:visible;
+    box-shadow:0 2px 12px rgba(0,0,0,0.3);
+    transition:border-color 0.2s;
+  }
+  .addr-search-box:focus-within { border-color:var(--cyan); }
+
+  .addr-search-box input {
+    border:none; outline:none; padding:10px 14px;
+    font-size:13px; width:200px; font-family:inherit;
+    color:var(--text); background:transparent;
+    border-radius:10px 0 0 10px;
+  }
+  .addr-search-box input::placeholder { color:var(--muted); }
+
+  .addr-btn {
+    padding:10px 14px; background:var(--cyan); color:#0f1117;
+    border:none; font-size:12px; font-weight:800;
+    cursor:pointer; font-family:inherit;
+    border-radius:0 8px 8px 0;
+    transition:opacity 0.15s; white-space:nowrap;
+  }
+  .addr-btn:hover { opacity:0.85; }
+
+  .addr-results {
+    position:absolute; top:calc(100% + 6px); left:0; right:0;
+    background:var(--surface); border:1.5px solid var(--border);
+    border-radius:10px; overflow:hidden;
+    box-shadow:0 4px 20px rgba(0,0,0,0.4);
+    z-index:500; display:none;
+    max-height:240px; overflow-y:auto;
+  }
+
+  .addr-result-item {
+    padding:10px 14px; font-size:12px; font-weight:600;
+    color:var(--text); cursor:pointer; border-bottom:1px solid var(--border);
+    line-height:1.4; transition:background 0.15s;
+  }
+  .addr-result-item:last-child { border-bottom:none; }
+  .addr-result-item:hover { background:var(--surface2); color:var(--cyan); }
+  .addr-result-item.no-results { color:var(--muted); cursor:default; }
+  .addr-result-item.no-results:hover { background:transparent; color:var(--muted); }
+
+  .addr-pin {
+    background:var(--cyan); border:2px solid white;
+    border-radius:50%; width:14px; height:14px;
+  }
+
+  /* ── Toast ── */
+  .toast {
+    position:fixed; bottom:60px; left:50%; transform:translateX(-50%);
+    z-index:999; background:var(--surface); border:1.5px solid var(--cyan);
+    color:var(--text); padding:10px 20px; border-radius:20px;
+    font-size:13px; font-weight:700; box-shadow:0 4px 16px rgba(0,0,0,0.4);
+    opacity:0; transition:opacity 0.3s; pointer-events:none; white-space:nowrap;
+  }
+  .toast.show { opacity:1; }
+
+  /* ── Session banner ── */
+  .session-banner {
+    position:fixed; bottom:12px; left:50%; transform:translateX(-50%);
+    z-index:200; background:var(--surface); border:1.5px solid var(--border);
+    color:var(--muted); padding:8px 16px; border-radius:20px;
+    font-size:12px; font-weight:600; box-shadow:0 2px 8px rgba(0,0,0,0.3);
+    display:none; gap:10px; align-items:center;
+  }
+  .session-banner span { color:var(--cyan); font-weight:800; }
+  .session-clear {
+    background:none; border:none; color:var(--muted); cursor:pointer;
+    font-size:15px; line-height:1; padding:0; font-family:inherit;
+  }
+  .session-clear:hover { color:var(--red); }
 </style>
 </head>
 <body>
@@ -346,9 +423,18 @@
   </div>
   <button class="icon-btn" id="heatBtn" onclick="toggleHeat()">Heatmap</button>
   <button class="icon-btn" id="routeBtn" onclick="toggleRoutes()">Route</button>
+  <button class="icon-btn" id="satelliteBtn" onclick="toggleSatellite()">Satellite</button>
   <button class="icon-btn" onclick="resetView()">Reset View</button>
+  <div class="addr-search-box" id="addrSearchWrap">
+    <input type="text" id="addrInput" placeholder="Search address..." onkeydown="if(event.key==='Enter')geocode()">
+    <button class="addr-btn" onclick="geocode()">Go</button>
+    <div class="addr-results" id="addrResults"></div>
+  </div>
   <button class="icon-btn" onclick="document.getElementById('fileInput2').click()">+ Add Run</button>
   <input type="file" id="fileInput2" multiple accept=".csv" style="display:none">
+  <button class="icon-btn" onclick="exportSession()" id="exportBtn" style="display:none;">Export Session</button>
+  <button class="icon-btn" onclick="document.getElementById('sessionInput').click()">Load Session</button>
+  <input type="file" id="sessionInput" accept=".json" style="display:none">
 </div>
 
 <div class="stats-panel" id="statsPanel" style="display:none;">
@@ -440,9 +526,11 @@ function launchMap() {
     document.getElementById('statsPanel').style.display = 'block';
     document.getElementById('bottombar').style.display = 'flex';
     document.getElementById('runsPanel').style.display = 'block';
+    document.getElementById('exportBtn').style.display = 'block';
     updateStats();
     fitAllNetworks();
     updateRunsList();
+    saveSession();
   });
 }
 
@@ -780,7 +868,8 @@ document.getElementById('fileInput2').addEventListener('change', function(e) {
   Array.from(e.target.files).forEach(function(f, i) {
     var idx = runs.length + i;
     readCSV(f, idx).then(function() {
-      updateStats(); updateRunsList();
+      updateStats(); updateRunsList(); saveSession();
+      showToast('Run added and saved');
     });
   });
 });
@@ -808,6 +897,336 @@ document.addEventListener('drop', function(e) {
     }
   }
 });
+
+// ── Session Persistence ─────────────────────────────────────
+var SESSION_KEY = 'rfsurveyor_session';
+
+function saveSession() {
+  try {
+    var sessionData = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      statusMap: statusMap,
+      runs: runs.map(function(r) {
+        return {
+          name: r.name,
+          color: r.color,
+          networks: r.networks,
+          visible: r.visible
+        };
+      })
+    };
+    localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+  } catch(e) {
+    console.warn('Session save failed:', e);
+  }
+}
+
+function loadSession(data) {
+  statusMap = data.statusMap || {};
+  var promises = data.runs.map(function(r, i) {
+    return new Promise(function(resolve) {
+      var runId = runs.length;
+      var run = {
+        id: runId,
+        name: r.name,
+        color: r.color || RUN_COLORS[runId % RUN_COLORS.length],
+        networks: r.networks,
+        markers: [],
+        routeLine: null,
+        visible: r.visible !== false
+      };
+      runs.push(run);
+      addRunToMap(run);
+      if (!run.visible) {
+        run.markers.forEach(function(m) {
+          if (map.hasLayer(m.marker)) map.removeLayer(m.marker);
+        });
+        if (run.routeLine) map.removeLayer(run.routeLine);
+      }
+      resolve();
+    });
+  });
+  Promise.all(promises).then(function() {
+    Object.keys(statusMap).forEach(function(mac) {
+      allMarkers.forEach(function(m) {
+        if (m.mac === mac.toLowerCase()) {
+          m.marker.setStyle({ color: statusColor(statusMap[mac]), weight: 3 });
+        }
+      });
+    });
+    updateStats();
+    updateRunsList();
+    fitAllNetworks();
+    var banner = document.getElementById('sessionBanner');
+    var info = document.getElementById('sessionInfo');
+    var d = new Date(data.savedAt);
+    var timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    info.textContent = data.runs.length + ' run' + (data.runs.length!==1?'s':'') + ', saved ' + timeStr;
+    banner.style.display = 'flex';
+  });
+}
+
+function checkSavedSession() {
+  try {
+    var raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return false;
+    var data = JSON.parse(raw);
+    if (!data.runs || data.runs.length === 0) return false;
+    return data;
+  } catch(e) { return false; }
+}
+
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+  document.getElementById('sessionBanner').style.display = 'none';
+  showToast('Session cleared');
+}
+
+function exportSession() {
+  if (runs.length === 0) { showToast('No data to export — load a CSV first'); return; }
+  var sessionData = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    appName: 'RF Survey Visualizer',
+    statusMap: statusMap,
+    runs: runs.map(function(r) {
+      return { name:r.name, color:r.color, networks:r.networks, visible:r.visible };
+    })
+  };
+  var blob = new Blob([JSON.stringify(sessionData, null, 2)], {type:'application/json'});
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  var date = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = 'rfsurveyor-session-' + date + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Session exported');
+}
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(function() { t.classList.remove('show'); }, 2500);
+}
+
+function allNetworkCount(data) {
+  return data.runs.reduce(function(sum, r) { return sum + (r.networks ? r.networks.length : 0); }, 0);
+}
+
+function restoreSession() {
+  var data = window._savedSession;
+  if (!data) return;
+  initMap();
+  document.getElementById('dropOverlay').style.display = 'none';
+  document.getElementById('topbar').style.display = 'flex';
+  document.getElementById('statsPanel').style.display = 'block';
+  document.getElementById('bottombar').style.display = 'flex';
+  document.getElementById('runsPanel').style.display = 'block';
+  document.getElementById('exportBtn').style.display = 'block';
+  loadSession(data);
+}
+
+// ── Wrap setStatus to auto-save ─────────────────────────────
+var _origSetStatus = setStatus;
+setStatus = function(mac, status) {
+  _origSetStatus(mac, status);
+  saveSession();
+};
+
+// ── Wrap toggleRun to auto-save ─────────────────────────────
+var _origToggleRun = toggleRun;
+toggleRun = function(runId) {
+  _origToggleRun(runId);
+  saveSession();
+};
+
+// ── Load session JSON file ──────────────────────────────────
+document.getElementById('sessionInput').addEventListener('change', function(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(ev) {
+    try {
+      var data = JSON.parse(ev.target.result);
+      if (!data.runs) throw new Error('Invalid session file');
+      if (runs.length > 0) {
+        if (!confirm('Replace current session with loaded file?')) return;
+        runs.forEach(function(r) {
+          r.markers.forEach(function(m) { if(map.hasLayer(m.marker)) map.removeLayer(m.marker); });
+          if (r.routeLine) map.removeLayer(r.routeLine);
+        });
+        runs = []; allMarkers = []; statusMap = {};
+      }
+      initMap();
+      document.getElementById('dropOverlay').style.display = 'none';
+      document.getElementById('topbar').style.display = 'flex';
+      document.getElementById('statsPanel').style.display = 'block';
+      document.getElementById('bottombar').style.display = 'flex';
+      document.getElementById('runsPanel').style.display = 'block';
+      document.getElementById('exportBtn').style.display = 'block';
+      loadSession(data);
+      showToast('Session loaded — ' + data.runs.length + ' run' + (data.runs.length!==1?'s':''));
+    } catch(err) {
+      showToast('Invalid session file');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// ── Auto-restore on page load ───────────────────────────────
+window.addEventListener('load', function() {
+  var saved = checkSavedSession();
+  if (!saved) return;
+  var restoreDiv = document.createElement('div');
+  restoreDiv.style.cssText = 'margin-top:20px;padding:16px;background:rgba(34,211,238,0.08);border:1.5px solid rgba(34,211,238,0.3);border-radius:12px;text-align:center;';
+  restoreDiv.innerHTML =
+    '<p style="font-size:13px;font-weight:700;color:#22d3ee;margin-bottom:6px;">Saved Session Found</p>' +
+    '<p style="font-size:12px;color:#64748b;margin-bottom:12px;">' +
+      saved.runs.length + ' run' + (saved.runs.length!==1?'s':'') + ' · ' +
+      allNetworkCount(saved) + ' networks</p>' +
+    '<button onclick="restoreSession()" style="background:#22d3ee;color:#0f1117;border:none;padding:9px 20px;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;margin-right:8px;">Restore Session</button>' +
+    '<button onclick="this.parentElement.remove()" style="background:none;border:none;color:#64748b;padding:9px 12px;font-size:13px;cursor:pointer;font-family:inherit;">Dismiss</button>';
+  document.getElementById('dropZone').parentElement.appendChild(restoreDiv);
+  window._savedSession = saved;
+});
+
+// ── Satellite ───────────────────────────────────────────────
+var satelliteLayer = null;
+var satelliteLabelLayer = null;
+var satelliteVisible = false;
+
+function toggleSatellite() {
+  satelliteVisible = !satelliteVisible;
+  var btn = document.getElementById('satelliteBtn');
+
+  if (satelliteVisible) {
+    // Esri World Imagery - full satellite
+    satelliteLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { opacity:1.0, maxZoom:20, attribution:'Esri, Maxar, Earthstar Geographics', zIndex:200 }
+    );
+    // Esri Hybrid Reference - road names, street labels designed for satellite
+    // This is specifically built to overlay on satellite imagery
+    satelliteLabelLayer = L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { opacity:1.0, maxZoom:20, attribution:'', zIndex:201 }
+    );
+    satelliteLayer.addTo(map);
+    // Small delay to ensure satellite loads before labels render on top
+    setTimeout(function() {
+      if (satelliteLabelLayer) satelliteLabelLayer.addTo(map);
+    }, 100);
+    btn.classList.add('active');
+    showToast('Satellite view active');
+  } else {
+    if (satelliteLayer) { map.removeLayer(satelliteLayer); satelliteLayer = null; }
+    if (satelliteLabelLayer) { map.removeLayer(satelliteLabelLayer); satelliteLabelLayer = null; }
+    btn.classList.remove('active');
+    showToast('Satellite off');
+  }
+}
+
+// ── Address Geocoder ────────────────────────────────────────
+var addrPin = null;
+var geocodeTimeout = null;
+
+function geocode() {
+  var query = document.getElementById('addrInput').value.trim();
+  if (!query) return;
+
+  var results = document.getElementById('addrResults');
+  results.style.display = 'block';
+  results.innerHTML = '<div class="addr-result-item" style="color:var(--muted);">Searching...</div>';
+
+  var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=5&q=' + encodeURIComponent(query);
+
+  fetch(url, { headers: { 'Accept-Language': 'en' } })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      results.innerHTML = '';
+      if (!data || data.length === 0) {
+        results.innerHTML = '<div class="addr-result-item no-results">No results found</div>';
+        return;
+      }
+      data.forEach(function(item) {
+        var div = document.createElement('div');
+        div.className = 'addr-result-item';
+        div.textContent = item.display_name;
+        div.onclick = function() {
+          flyToResult(parseFloat(item.lat), parseFloat(item.lon), item.display_name);
+        };
+        results.appendChild(div);
+      });
+    })
+    .catch(function() {
+      results.innerHTML = '<div class="addr-result-item no-results">Search failed, check connection</div>';
+    });
+}
+
+function flyToResult(lat, lon, label) {
+  // Remove previous pin
+  if (addrPin) map.removeLayer(addrPin);
+
+  // Close results
+  document.getElementById('addrResults').style.display = 'none';
+  document.getElementById('addrInput').value = label.split(',')[0];
+
+  // Drop pin and fly
+  addrPin = L.circleMarker([lat, lon], {
+    radius: 10,
+    fillColor: '#22d3ee',
+    color: 'white',
+    weight: 2,
+    fillOpacity: 1
+  }).addTo(map);
+
+  addrPin.bindPopup(
+    '<div style="font-family:-apple-system,sans-serif;font-size:13px;max-width:200px;">' +
+    '<p style="font-weight:800;color:#22d3ee;margin-bottom:4px;">Search Result</p>' +
+    '<p style="color:#e2e8f0;line-height:1.5;">' + label + '</p>' +
+    '</div>'
+  ).openPopup();
+
+  map.flyTo([lat, lon], 17, { animate: true, duration: 1.2 });
+
+  // If buildings enabled fetch for new area
+  if (buildingsVisible) setTimeout(fetchBuildings, 1400);
+}
+
+// Close addr results when clicking elsewhere
+document.addEventListener('click', function(e) {
+  var wrap = document.getElementById('addrSearchWrap');
+  if (wrap && !wrap.contains(e.target)) {
+    document.getElementById('addrResults').style.display = 'none';
+  }
+});
+
+// Live search on enter key already handled by onkeydown
+// Also trigger on input after a short delay
+document.addEventListener('DOMContentLoaded', function() {
+  var inp = document.getElementById('addrInput');
+  if (inp) {
+    inp.addEventListener('input', function() {
+      clearTimeout(geocodeTimeout);
+      if (inp.value.length > 4) {
+        geocodeTimeout = setTimeout(geocode, 600);
+      }
+    });
+  }
+});
 </script>
+
+<div class="toast" id="toast"></div>
+<div class="session-banner" id="sessionBanner">
+  Session restored — <span id="sessionInfo"></span>
+  <button class="session-clear" onclick="clearSession()" title="Clear saved session">×</button>
+</div>
+
 </body>
 </html>
